@@ -58,15 +58,15 @@ const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
-const MODEL_DIRECTIVES: Record<string, string> = {
-  '/opus': 'claude-opus-4-6',
-  '/sonnet': 'claude-sonnet-4-6',
-  '/haiku': 'claude-haiku-4-5-20251001',
+const MODEL_DIRECTIVES: Record<string, { id: string; label: string }> = {
+  '/opus': { id: 'claude-opus-4-6', label: 'Opus' },
+  '/sonnet': { id: 'claude-sonnet-4-6', label: 'Sonnet' },
+  '/haiku': { id: 'claude-haiku-4-5-20251001', label: 'Haiku' },
 };
 
 /**
  * Parse a model directive (/opus, /sonnet, /haiku) from prompt text.
- * Strips the directive and returns the target model ID.
+ * Replaces the directive with a readable marker so the message still makes sense.
  */
 function parseModelDirective(prompt: string): { modelId: string | null; cleanPrompt: string } {
   // Match /opus, /sonnet, /haiku as a standalone token anywhere in the text
@@ -74,9 +74,12 @@ function parseModelDirective(prompt: string): { modelId: string | null; cleanPro
   if (!match) return { modelId: null, cleanPrompt: prompt };
 
   const directive = match[1].toLowerCase();
+  const entry = MODEL_DIRECTIVES[directive];
+  if (!entry) return { modelId: null, cleanPrompt: prompt };
+
   return {
-    modelId: MODEL_DIRECTIVES[directive] || null,
-    cleanPrompt: prompt.replace(match[1], '').replace(/\s{2,}/g, ' ').trim(),
+    modelId: entry.id,
+    cleanPrompt: prompt.replace(match[1], `[using ${entry.label}]`).trim(),
   };
 }
 
@@ -365,9 +368,11 @@ async function runQuery(
   const stream = new MessageStream();
   stream.push(cleanPrompt);
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
+  // Poll IPC for follow-up messages and _close sentinel during the query.
+  // queryRef is set once the query starts so pollIpcDuringQuery can call setModel().
   let ipcPolling = true;
   let closedDuringQuery = false;
+  let queryRef: ReturnType<typeof query> | null = null;
   const pollIpcDuringQuery = () => {
     if (!ipcPolling) return;
     if (shouldClose()) {
@@ -379,8 +384,18 @@ async function runQuery(
     }
     const messages = drainIpcInput();
     for (const text of messages) {
+      // Parse model directives from follow-up messages
+      const { modelId, cleanPrompt: cleaned } = parseModelDirective(text);
+      if (queryRef) {
+        // Switch model for this message, or reset to default if no directive
+        const targetModel = modelId || defaultModel;
+        log(`Model for IPC message: ${targetModel}${modelId ? ' (directive)' : ' (default)'}`);
+        queryRef.setModel(targetModel).catch((err: unknown) => {
+          log(`setModel failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
       log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(text);
+      stream.push(modelId ? cleaned : text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -425,7 +440,7 @@ async function runQuery(
   }
   log(`Model: ${activeModel}, escalation: ${escalationModel}, maxThinking: ${maxThinking}`);
 
-  for await (const message of query({
+  const q = query({
     prompt: stream,
     options: {
       cwd: '/workspace/group',
@@ -478,7 +493,10 @@ async function runQuery(
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
       },
     }
-  })) {
+  });
+  queryRef = q;
+
+  for await (const message of q) {
     messageCount++;
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
