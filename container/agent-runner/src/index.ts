@@ -58,6 +58,28 @@ const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
+const MODEL_DIRECTIVES: Record<string, string> = {
+  '/opus': 'claude-opus-4-6',
+  '/sonnet': 'claude-sonnet-4-6',
+  '/haiku': 'claude-haiku-4-5-20251001',
+};
+
+/**
+ * Parse a model directive (/opus, /sonnet, /haiku) from prompt text.
+ * Strips the directive and returns the target model ID.
+ */
+function parseModelDirective(prompt: string): { modelId: string | null; cleanPrompt: string } {
+  // Match /opus, /sonnet, /haiku as a standalone token anywhere in the text
+  const match = prompt.match(/(?:^|\s)(\/(?:opus|sonnet|haiku))\b/i);
+  if (!match) return { modelId: null, cleanPrompt: prompt };
+
+  const directive = match[1].toLowerCase();
+  return {
+    modelId: MODEL_DIRECTIVES[directive] || null,
+    cleanPrompt: prompt.replace(match[1], '').replace(/\s{2,}/g, ' ').trim(),
+  };
+}
+
 /**
  * Push-based async iterable for streaming user messages to the SDK.
  * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
@@ -337,8 +359,11 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  // Check for model directive in prompt (/opus, /sonnet, /haiku)
+  const { modelId: modelOverride, cleanPrompt } = parseModelDirective(prompt);
+
   const stream = new MessageStream();
-  stream.push(prompt);
+  stream.push(cleanPrompt);
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -389,10 +414,23 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Model configuration: default to Sonnet 4.6, escalate to Opus for deep work
+  const defaultModel = sdkEnv.CLAUDE_MODEL || 'claude-sonnet-4-6';
+  const escalationModel = (sdkEnv.CLAUDE_ESCALATION_MODEL || 'opus') as 'opus' | 'sonnet' | 'haiku';
+  const maxThinking = parseInt(sdkEnv.CLAUDE_MAX_THINKING_TOKENS || '16384', 10);
+
+  const activeModel = modelOverride || defaultModel;
+  if (modelOverride) {
+    log(`Model override: ${modelOverride} (directive found in prompt)`);
+  }
+  log(`Model: ${activeModel}, escalation: ${escalationModel}, maxThinking: ${maxThinking}`);
+
   for await (const message of query({
     prompt: stream,
     options: {
       cwd: '/workspace/group',
+      model: activeModel,
+      maxThinkingTokens: maxThinking,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -409,6 +447,18 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*'
       ],
+      agents: {
+        research: {
+          description: 'Deep research agent for complex analysis, multi-step investigations, literature review, and tasks requiring thorough reasoning. Use when the task needs careful, exhaustive exploration rather than a quick answer.',
+          model: escalationModel,
+          prompt: 'You are a deep research agent. Take your time to thoroughly investigate, analyze multiple angles, and provide comprehensive findings. Read widely, cross-reference sources, and synthesize insights.',
+        },
+        council: {
+          description: 'Strategic reasoning agent for difficult decisions, architecture planning, tradeoff analysis, and problems requiring careful deliberation. Use when you need a second opinion or the decision has significant consequences.',
+          model: escalationModel,
+          prompt: 'You are a strategic reasoning agent. Carefully consider all tradeoffs, edge cases, and long-term implications. Present your analysis clearly with pros, cons, and a recommended course of action.',
+        },
+      },
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
