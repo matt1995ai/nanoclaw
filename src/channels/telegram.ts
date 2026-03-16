@@ -55,7 +55,11 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:text', async (ctx) => {
       // Skip commands — but let agent directives (/opus, /sonnet, /haiku, /think) pass through
       const agentDirectiveRe = /^\/(?:opus|sonnet|haiku|think)\b/i;
-      if (ctx.message.text.startsWith('/') && !agentDirectiveRe.test(ctx.message.text)) return;
+      if (
+        ctx.message.text.startsWith('/') &&
+        !agentDirectiveRe.test(ctx.message.text)
+      )
+        return;
 
       const chatJid = `tg:${ctx.chat.id}`;
       let content = ctx.message.text;
