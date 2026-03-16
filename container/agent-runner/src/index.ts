@@ -58,29 +58,51 @@ const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
-const MODEL_DIRECTIVES: Record<string, { id: string; label: string }> = {
-  '/opus': { id: 'claude-opus-4-6', label: 'Opus' },
-  '/sonnet': { id: 'claude-sonnet-4-6', label: 'Sonnet' },
-  '/haiku': { id: 'claude-haiku-4-5-20251001', label: 'Haiku' },
+const MODEL_DIRECTIVES: Record<string, { id: string; label: string; version: string }> = {
+  '/opus': { id: 'claude-opus-4-6', label: 'Opus', version: 'Opus 4.6' },
+  '/sonnet': { id: 'claude-sonnet-4-6', label: 'Sonnet', version: 'Sonnet 4.6' },
+  '/haiku': { id: 'claude-haiku-4-5-20251001', label: 'Haiku', version: 'Haiku 4.5' },
 };
 
+const HIGH_THINKING_TOKENS = 128_000;
+
+interface ParsedDirectives {
+  modelId: string | null;
+  modelVersion: string | null;
+  highThinking: boolean;
+  cleanPrompt: string;
+}
+
 /**
- * Parse a model directive (/opus, /sonnet, /haiku) from prompt text.
- * Replaces the directive with a readable marker so the message still makes sense.
+ * Parse directives (/opus, /sonnet, /haiku, /think) from prompt text.
+ * Replaces directives with readable markers so the message still makes sense.
  */
-function parseModelDirective(prompt: string): { modelId: string | null; cleanPrompt: string } {
-  // Match /opus, /sonnet, /haiku as a standalone token anywhere in the text
-  const match = prompt.match(/(?:^|\s)(\/(?:opus|sonnet|haiku))\b/i);
-  if (!match) return { modelId: null, cleanPrompt: prompt };
+function parseModelDirective(prompt: string): ParsedDirectives {
+  let cleanPrompt = prompt;
+  let modelId: string | null = null;
+  let modelVersion: string | null = null;
+  let highThinking = false;
 
-  const directive = match[1].toLowerCase();
-  const entry = MODEL_DIRECTIVES[directive];
-  if (!entry) return { modelId: null, cleanPrompt: prompt };
+  // Match /opus, /sonnet, /haiku
+  const modelMatch = cleanPrompt.match(/(?:^|\s)(\/(?:opus|sonnet|haiku))\b/i);
+  if (modelMatch) {
+    const directive = modelMatch[1].toLowerCase();
+    const entry = MODEL_DIRECTIVES[directive];
+    if (entry) {
+      modelId = entry.id;
+      modelVersion = entry.version;
+      cleanPrompt = cleanPrompt.replace(modelMatch[1], `[using ${entry.label}]`).trim();
+    }
+  }
 
-  return {
-    modelId: entry.id,
-    cleanPrompt: prompt.replace(match[1], `[using ${entry.label}]`).trim(),
-  };
+  // Match /think
+  const thinkMatch = cleanPrompt.match(/(?:^|\s)(\/think)\b/i);
+  if (thinkMatch) {
+    highThinking = true;
+    cleanPrompt = cleanPrompt.replace(thinkMatch[1], '[high thinking]').trim();
+  }
+
+  return { modelId, modelVersion, highThinking, cleanPrompt };
 }
 
 /**
@@ -362,8 +384,8 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
-  // Check for model directive in prompt (/opus, /sonnet, /haiku)
-  const { modelId: modelOverride, cleanPrompt } = parseModelDirective(prompt);
+  // Check for directives in prompt (/opus, /sonnet, /haiku, /think)
+  const { modelId: modelOverride, modelVersion, highThinking: thinkOverride, cleanPrompt } = parseModelDirective(prompt);
 
   const stream = new MessageStream();
   stream.push(cleanPrompt);
@@ -384,8 +406,8 @@ async function runQuery(
     }
     const messages = drainIpcInput();
     for (const text of messages) {
-      // Parse model directives from follow-up messages
-      const { modelId, cleanPrompt: cleaned } = parseModelDirective(text);
+      // Parse directives from follow-up messages
+      const { modelId, modelVersion: ipcModelVersion, highThinking: ipcThink, cleanPrompt: cleaned } = parseModelDirective(text);
       if (queryRef) {
         // Switch model for this message, or reset to default if no directive
         const targetModel = modelId || defaultModel;
@@ -393,9 +415,16 @@ async function runQuery(
         queryRef.setModel(targetModel).catch((err: unknown) => {
           log(`setModel failed: ${err instanceof Error ? err.message : String(err)}`);
         });
+        const ipcConfirm: string[] = [];
+        if (ipcModelVersion) ipcConfirm.push(`Model: ${ipcModelVersion}`);
+        if (ipcThink) ipcConfirm.push(`Thinking: high (${HIGH_THINKING_TOKENS / 1000}k)`);
+        if (ipcConfirm.length > 0) {
+          writeOutput({ status: 'success', result: ipcConfirm.join(' | '), newSessionId: undefined });
+        }
       }
+      const hasDirective = modelId || ipcThink;
       log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(modelId ? cleaned : text);
+      stream.push(hasDirective ? cleaned : text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -432,11 +461,22 @@ async function runQuery(
   // Model configuration: default to Sonnet 4.6, escalate to Opus for deep work
   const defaultModel = sdkEnv.CLAUDE_MODEL || 'claude-sonnet-4-6';
   const escalationModel = (sdkEnv.CLAUDE_ESCALATION_MODEL || 'opus') as 'opus' | 'sonnet' | 'haiku';
-  const maxThinking = parseInt(sdkEnv.CLAUDE_MAX_THINKING_TOKENS || '16384', 10);
+  const baseThinking = parseInt(sdkEnv.CLAUDE_MAX_THINKING_TOKENS || '16384', 10);
+  const maxThinking = thinkOverride ? HIGH_THINKING_TOKENS : baseThinking;
 
   const activeModel = modelOverride || defaultModel;
+  // Build confirmation parts
+  const confirmParts: string[] = [];
   if (modelOverride) {
     log(`Model override: ${modelOverride} (directive found in prompt)`);
+    confirmParts.push(`Model: ${modelVersion}`);
+  }
+  if (thinkOverride) {
+    log(`High thinking enabled: ${HIGH_THINKING_TOKENS} tokens`);
+    confirmParts.push(`Thinking: high (${HIGH_THINKING_TOKENS / 1000}k)`);
+  }
+  if (confirmParts.length > 0) {
+    writeOutput({ status: 'success', result: confirmParts.join(' | '), newSessionId: undefined });
   }
   log(`Model: ${activeModel}, escalation: ${escalationModel}, maxThinking: ${maxThinking}`);
 
