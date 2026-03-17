@@ -6,6 +6,8 @@ import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import os from 'os';
+
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -209,6 +211,20 @@ function buildVolumeMounts(
     mounts.push(...validatedMounts);
   }
 
+  // Mount host SSH keys (read-only) for main group so git push works.
+  // This is a first-class mount that bypasses the additional mount validator
+  // because .ssh is (correctly) blocked there. Only main gets this.
+  if (isMain) {
+    const hostSshDir = path.join(os.homedir(), '.ssh');
+    if (fs.existsSync(hostSshDir)) {
+      mounts.push({
+        hostPath: hostSshDir,
+        containerPath: '/home/node/.ssh',
+        readonly: true,
+      });
+    }
+  }
+
   return mounts;
 }
 
@@ -257,6 +273,12 @@ function buildContainerArgs(
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
+
+  // Configure SSH for git push (uses mounted host keys at /home/node/.ssh)
+  args.push(
+    '-e',
+    'GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes',
+  );
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

@@ -37,7 +37,7 @@ The vault is the persistent knowledge system shared across all Claude interfaces
 - **You write, Matthew approves.** Proposed CONTEXT.md changes go to `staging/context-proposal.md`, never directly to CONTEXT.md.
 - **Every file gets a `Last Updated:` header.** Update it when you touch a file.
 - **Update INDEX.md** when any file is created or significantly modified.
-- **Git after every write:** `cd /workspace/extra/vault && git add -A && git commit -m "descriptive message" && git push`
+- **Git after every write:** `cd /workspace/extra/vault && git pull --rebase && git add -A && git commit -m "descriptive message" && git push`
 - **No raw data.** Synthesized insights only. No workout CSVs, no API dumps.
 - **No credentials.** Never store tokens, keys, or passwords in vault.
 - **No brokerage data.** Paper portfolio tracking only. Real accounts are NEVER agent-touched.
@@ -65,10 +65,13 @@ When the morning brief task runs, generate this:
 [Summary of TODAY.md — what was planned vs accomplished]
 
 📬 Pending Approvals
-[Items in staging/ awaiting review, or "Nothing pending"]
+[List all files in staging/ with brief description. For context-proposal.md, show the specific proposed changes. Ask: approve, reject, or defer?]
 
 🔬 Overnight Work
-[Any session summaries in sessions/, or "No overnight activity"]
+[List new files in sessions/ since last brief, with one-line summaries. Or "No new sessions."]
+
+📥 Inbox
+[N unprocessed tasks in tasks/inbox.md. List them. Ask: move to active, someday, or delete?]
 
 📈 Market Snapshot
 [S&P 500, major headlines from web search]
@@ -80,6 +83,11 @@ When the morning brief task runs, generate this:
 After sending the brief:
 - Archive yesterday's TODAY.md to `dailies/[YYYY-MM-DD].md`
 - Reset TODAY.md with empty template for the new day
+
+When Matthew responds to Pending Approvals:
+- **Approved:** Apply the change to CONTEXT.md, clear the entry from `staging/context-proposal.md`, git commit + push
+- **Rejected:** Clear the entry from `staging/context-proposal.md`, note the rejection reason in `historian/learnings.md`
+- **Deferred:** Leave the entry in staging, move on
 
 ## Close-Out Format
 
@@ -97,7 +105,10 @@ At 5pm, send this prompt:
 When Matthew responds:
 - Update TODAY.md with actuals + tomorrow's plan
 - If he delegated work, acknowledge and queue it
+- **Historian trigger:** If the response contains a decision, blocker, or priority shift, write a brief session summary (e.g., "Close-out 2026-03-17: VFv3 green for submission, Henryedu postponed to April")
 - Commit and push vault changes
+
+If no response by 8pm: do not update TODAY.md. Log skipped close-out to `historian/learnings.md`. Carry forward TODAY.md to next day.
 
 ## Task Capture
 
@@ -105,6 +116,49 @@ When Matthew sends a task via Telegram (e.g. "remind me to call the school" or "
 - Write to `vault/tasks/inbox.md` with timestamp
 - Acknowledge briefly: "Added to inbox."
 - Don't over-explain. Don't ask clarifying questions unless genuinely ambiguous.
+
+## Historian (Session Knowledge Capture)
+
+After each significant conversation, capture what happened:
+
+### When to Write a Session Summary
+- A decision was made
+- A task was completed
+- Research produced findings
+- Project status changed
+- A problem was solved or a pattern was identified
+- NOT for: quick Q&A, task captures, brief status checks
+
+### How to Write It
+1. Write to `/workspace/extra/vault/sessions/YYYY-MM-DD-brief-description.md`
+2. Use the template at `/workspace/extra/vault/_templates/session-summary.md`
+3. Keep it concise — what happened, what was decided, what changed, what's next
+4. Update INDEX.md with the new entry
+5. Git commit + push
+
+### When to Propose CONTEXT.md Changes
+If the conversation reveals:
+- A project status change (e.g., "VFv3 shipped to Play Store")
+- A new project or deprecated project
+- A changed priority or focus area
+- A completed milestone
+
+Write the proposal to `/workspace/extra/vault/staging/context-proposal.md`:
+```
+## Proposed Change — [date]
+**Section:** [which section of CONTEXT.md]
+**Current:** [what it says now]
+**Proposed:** [what it should say]
+**Reason:** [why this changed]
+```
+
+Do NOT edit CONTEXT.md directly. Matthew approves proposals in the morning brief.
+
+### Learnings
+After writing summaries, note in `/workspace/extra/vault/historian/learnings.md`:
+- What made this summary useful or not
+- Patterns in what Matthew cares about vs ignores
+- Format improvements to try next time
 
 ## Communication Style
 
