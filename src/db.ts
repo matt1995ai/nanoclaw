@@ -93,6 +93,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add mount_overrides column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN mount_overrides TEXT DEFAULT NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -368,8 +377,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, mount_overrides)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -382,27 +391,40 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.mount_overrides ? JSON.stringify(task.mount_overrides) : null,
   );
 }
 
+function hydrateTask(row: Record<string, unknown>): ScheduledTask {
+  return {
+    ...(row as unknown as ScheduledTask),
+    mount_overrides: typeof row.mount_overrides === 'string'
+      ? JSON.parse(row.mount_overrides)
+      : null,
+  };
+}
+
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
-    | ScheduledTask
+  const row = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
+    | Record<string, unknown>
     | undefined;
+  return row ? hydrateTask(row) : undefined;
 }
 
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
-  return db
+  const rows = db
     .prepare(
       'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
     )
-    .all(groupFolder) as ScheduledTask[];
+    .all(groupFolder) as Record<string, unknown>[];
+  return rows.map(hydrateTask);
 }
 
 export function getAllTasks(): ScheduledTask[] {
-  return db
+  const rows = db
     .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
-    .all() as ScheduledTask[];
+    .all() as Record<string, unknown>[];
+  return rows.map(hydrateTask);
 }
 
 export function updateTask(
@@ -410,7 +432,7 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status' | 'mount_overrides'
     >
   >,
 ): void {
@@ -437,6 +459,10 @@ export function updateTask(
     fields.push('status = ?');
     values.push(updates.status);
   }
+  if (updates.mount_overrides !== undefined) {
+    fields.push('mount_overrides = ?');
+    values.push(updates.mount_overrides ? JSON.stringify(updates.mount_overrides) : null);
+  }
 
   if (fields.length === 0) return;
 
@@ -454,7 +480,7 @@ export function deleteTask(id: string): void {
 
 export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
-  return db
+  const rows = db
     .prepare(
       `
     SELECT * FROM scheduled_tasks
@@ -462,7 +488,8 @@ export function getDueTasks(): ScheduledTask[] {
     ORDER BY next_run
   `,
     )
-    .all(now) as ScheduledTask[];
+    .all(now) as Record<string, unknown>[];
+  return rows.map(hydrateTask);
 }
 
 export function updateTaskAfterRun(

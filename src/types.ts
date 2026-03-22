@@ -2,6 +2,12 @@ export interface AdditionalMount {
   hostPath: string; // Absolute path on host (supports ~ for home)
   containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
   readonly?: boolean; // Default: true for safety
+  floor?: boolean; // When true, task mount overrides cannot restrict this mount's mode
+}
+
+export interface MountOverride {
+  path: string; // Container mount name (e.g. "dev") or full path ("/workspace/extra/dev")
+  mode: 'ro' | 'rw';
 }
 
 /**
@@ -66,6 +72,7 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  mount_overrides: MountOverride[] | null;
 }
 
 export interface TaskRunLog {

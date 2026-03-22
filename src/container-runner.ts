@@ -28,8 +28,12 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
-import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { readEnvFile } from './env.js';
+import {
+  applyMountOverrides,
+  validateAdditionalMounts,
+} from './mount-security.js';
+import { MountOverride, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -43,6 +47,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  mountOverrides?: MountOverride[] | null;
 }
 
 export interface ContainerOutput {
@@ -61,6 +66,7 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  mountOverrides?: MountOverride[] | null,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
@@ -208,7 +214,18 @@ function buildVolumeMounts(
       group.name,
       isMain,
     );
-    mounts.push(...validatedMounts);
+    if (mountOverrides?.length) {
+      mounts.push(
+        ...applyMountOverrides(
+          validatedMounts,
+          group.containerConfig.additionalMounts,
+          mountOverrides,
+          isMain,
+        ),
+      );
+    } else {
+      mounts.push(...validatedMounts);
+    }
   }
 
   // Mount host SSH keys (read-only) for main group so git push works.
@@ -314,7 +331,7 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = buildVolumeMounts(group, input.isMain, input.mountOverrides);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);

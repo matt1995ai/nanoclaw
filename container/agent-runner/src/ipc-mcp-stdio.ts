@@ -91,6 +91,10 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    mount_overrides: z.array(z.object({
+      path: z.string().describe('Mount name (e.g. "dev") or full container path ("/workspace/extra/dev")'),
+      mode: z.enum(['ro', 'rw']).describe('Access mode: ro=read-only, rw=read-write'),
+    })).optional().describe('Override mount access modes for this task. Only affects existing group mounts. Cannot add new mounts. Mounts with floor protection cannot be restricted.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -142,6 +146,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
+      mount_overrides: args.mount_overrides || undefined,
     };
 
     writeIpcFile(TASKS_DIR, data);
@@ -255,6 +260,10 @@ server.tool(
     prompt: z.string().optional().describe('New prompt for the task'),
     schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
     schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    mount_overrides: z.array(z.object({
+      path: z.string().describe('Mount name (e.g. "dev") or full container path ("/workspace/extra/dev")'),
+      mode: z.enum(['ro', 'rw']).describe('Access mode: ro=read-only, rw=read-write'),
+    })).optional().describe('Updated mount overrides. Pass empty array to clear.'),
   },
   async (args) => {
     // Validate schedule_value if provided
@@ -280,7 +289,7 @@ server.tool(
       }
     }
 
-    const data: Record<string, string | undefined> = {
+    const data: Record<string, unknown> = {
       type: 'update_task',
       taskId: args.task_id,
       groupFolder,
@@ -290,6 +299,7 @@ server.tool(
     if (args.prompt !== undefined) data.prompt = args.prompt;
     if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
     if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+    if (args.mount_overrides !== undefined) data.mount_overrides = args.mount_overrides;
 
     writeIpcFile(TASKS_DIR, data);
 

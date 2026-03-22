@@ -8,7 +8,7 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { MountOverride, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -162,6 +162,7 @@ export async function processTaskIpc(
     schedule_type?: string;
     schedule_value?: string;
     context_mode?: string;
+    mount_overrides?: unknown;
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
@@ -255,6 +256,20 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
+
+        // Validate mount_overrides if provided
+        let mountOverrides: MountOverride[] | null = null;
+        if (Array.isArray(data.mount_overrides)) {
+          mountOverrides = (data.mount_overrides as Array<Record<string, unknown>>)
+            .filter(
+              (o) =>
+                typeof o.path === 'string' &&
+                (o.mode === 'ro' || o.mode === 'rw'),
+            )
+            .map((o) => ({ path: o.path as string, mode: o.mode as 'ro' | 'rw' }));
+          if (mountOverrides.length === 0) mountOverrides = null;
+        }
+
         createTask({
           id: taskId,
           group_folder: targetFolder,
@@ -266,6 +281,7 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          mount_overrides: mountOverrides,
         });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },
@@ -359,6 +375,20 @@ export async function processTaskIpc(
             | 'once';
         if (data.schedule_value !== undefined)
           updates.schedule_value = data.schedule_value;
+        if (data.mount_overrides !== undefined) {
+          if (Array.isArray(data.mount_overrides)) {
+            const validated = (data.mount_overrides as Array<Record<string, unknown>>)
+              .filter(
+                (o) =>
+                  typeof o.path === 'string' &&
+                  (o.mode === 'ro' || o.mode === 'rw'),
+              )
+              .map((o) => ({ path: o.path as string, mode: o.mode as 'ro' | 'rw' }));
+            updates.mount_overrides = validated.length > 0 ? validated : null;
+          } else {
+            updates.mount_overrides = null; // Clear overrides
+          }
+        }
 
         // Recompute next_run if schedule changed
         if (data.schedule_type || data.schedule_value) {

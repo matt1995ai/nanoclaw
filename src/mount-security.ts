@@ -12,7 +12,12 @@ import path from 'path';
 import pino from 'pino';
 
 import { MOUNT_ALLOWLIST_PATH } from './config.js';
-import { AdditionalMount, AllowedRoot, MountAllowlist } from './types.js';
+import {
+  AdditionalMount,
+  AllowedRoot,
+  MountAllowlist,
+  MountOverride,
+} from './types.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -382,6 +387,83 @@ export function validateAdditionalMounts(
   }
 
   return validatedMounts;
+}
+
+/**
+ * Apply per-task mount overrides using merge semantics.
+ * Overrides layer on top of base group mounts — they can restrict (rw → ro)
+ * or extend (ro → rw, if allowlist permits) but cannot add new mounts.
+ * Mounts with floor=true in the base config cannot be restricted.
+ */
+export function applyMountOverrides(
+  validatedMounts: Array<{
+    hostPath: string;
+    containerPath: string;
+    readonly: boolean;
+  }>,
+  rawMounts: AdditionalMount[],
+  overrides: MountOverride[],
+  isMain: boolean,
+): Array<{ hostPath: string; containerPath: string; readonly: boolean }> {
+  // Deep-copy so we don't mutate the original
+  const result = validatedMounts.map((m) => ({ ...m }));
+
+  // Build lookup from container path to raw mount (for floor flag + re-validation)
+  const rawByContainerPath = new Map<string, AdditionalMount>();
+  for (const raw of rawMounts) {
+    const cp = raw.containerPath || path.basename(raw.hostPath);
+    rawByContainerPath.set(`/workspace/extra/${cp}`, raw);
+  }
+
+  for (const override of overrides) {
+    // Normalize override path
+    const normalizedPath = override.path.startsWith('/workspace/extra/')
+      ? override.path
+      : `/workspace/extra/${override.path}`;
+
+    // Find matching validated mount
+    const mount = result.find((m) => m.containerPath === normalizedPath);
+    if (!mount) {
+      logger.warn(
+        { overridePath: override.path, normalizedPath },
+        'Mount override path does not match any base group mount — skipping',
+      );
+      continue;
+    }
+
+    // Check floor protection
+    const raw = rawByContainerPath.get(normalizedPath);
+    if (raw?.floor && override.mode === 'ro') {
+      logger.info(
+        { overridePath: override.path },
+        'Mount override blocked — mount has floor protection',
+      );
+      continue;
+    }
+
+    if (override.mode === 'ro') {
+      mount.readonly = true;
+    } else if (override.mode === 'rw' && mount.readonly) {
+      // Escalation: re-validate against allowlist to ensure it permits rw
+      if (raw) {
+        const revalidation = validateMount(
+          { ...raw, readonly: false },
+          isMain,
+        );
+        if (revalidation.allowed && !revalidation.effectiveReadonly) {
+          mount.readonly = false;
+        } else {
+          logger.info(
+            { overridePath: override.path, reason: revalidation.reason },
+            'Mount override rw escalation denied by allowlist',
+          );
+        }
+      }
+    }
+    // mode matches current state: no-op
+  }
+
+  return result;
 }
 
 /**
