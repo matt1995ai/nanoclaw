@@ -458,10 +458,10 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  // Model configuration: default to Sonnet 4.6, escalate to Opus for deep work
-  const defaultModel = sdkEnv.CLAUDE_MODEL || 'claude-sonnet-4-6';
+  // Model configuration: default to Opus 4.6 with high thinking
+  const defaultModel = sdkEnv.CLAUDE_MODEL || 'claude-opus-4-6';
   const escalationModel = (sdkEnv.CLAUDE_ESCALATION_MODEL || 'opus') as 'opus' | 'sonnet' | 'haiku';
-  const baseThinking = parseInt(sdkEnv.CLAUDE_MAX_THINKING_TOKENS || '16384', 10);
+  const baseThinking = parseInt(sdkEnv.CLAUDE_MAX_THINKING_TOKENS || '128000', 10);
   const maxThinking = thinkOverride ? HIGH_THINKING_TOKENS : baseThinking;
 
   const activeModel = modelOverride || defaultModel;
