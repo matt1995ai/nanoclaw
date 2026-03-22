@@ -98,9 +98,7 @@ describe('applyMountOverrides', () => {
     const raw: AdditionalMount[] = [
       { hostPath: '/home/user/vault', containerPath: 'vault', readonly: false },
     ];
-    const overrides: MountOverride[] = [
-      { path: 'nonexistent', mode: 'ro' },
-    ];
+    const overrides: MountOverride[] = [{ path: 'nonexistent', mode: 'ro' }];
 
     const result = applyMountOverrides(base, raw, overrides, true);
 
@@ -152,6 +150,36 @@ describe('applyMountOverrides', () => {
     applyMountOverrides(base, raw, overrides, true);
 
     expect(base[0].readonly).toBe(false); // original unchanged
+  });
+
+  it('denies rw escalation when allowlist forces readonly', () => {
+    // Base mount is ro (e.g., forced by allowlist nonMainReadOnly)
+    const base = makeValidated([
+      { name: 'dev', hostPath: '/home/user/dev', readonly: true },
+    ]);
+    const raw: AdditionalMount[] = [
+      { hostPath: '/home/user/dev', containerPath: 'dev', readonly: false },
+    ];
+    const overrides: MountOverride[] = [{ path: 'dev', mode: 'rw' }];
+
+    // Mock the allowlist so validateMount returns effectiveReadonly: true
+    // (nonMainReadOnly forces ro for non-main groups)
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({
+        allowedRoots: [
+          { path: '/home/user', allowReadWrite: true },
+        ],
+        blockedPatterns: [],
+        nonMainReadOnly: true,
+      }),
+    );
+    mockExistsSync.mockReturnValue(true);
+    mockRealpathSync.mockImplementation((p: string) => p);
+
+    // isMain=false triggers nonMainReadOnly enforcement
+    const result = applyMountOverrides(base, raw, overrides, false);
+
+    expect(result[0].readonly).toBe(true); // escalation denied — stays ro
   });
 
   it('no-ops when override mode matches current state', () => {
