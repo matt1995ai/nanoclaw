@@ -170,7 +170,81 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption || '';
+
+      try {
+        // Get highest-resolution photo (last element in the array)
+        const photos = ctx.message.photo;
+        const bestPhoto = photos[photos.length - 1];
+        const file = await ctx.api.getFile(bestPhoto.file_id);
+
+        if (!file.file_path) throw new Error('No file_path returned');
+
+        // Download the image from Telegram's file API
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const base64 = buffer.toString('base64');
+
+        // Detect media type from file extension (Telegram converts photos to JPEG)
+        const ext = file.file_path.split('.').pop()?.toLowerCase();
+        const mediaType =
+          ext === 'png' ? 'image/png' :
+          ext === 'gif' ? 'image/gif' :
+          ext === 'webp' ? 'image/webp' :
+          'image/jpeg';
+
+        // Embed image as a parseable marker in message content
+        // The agent-runner will extract these and build vision content blocks
+        const imageMarker = `[nc:image:${mediaType}:${base64}]`;
+        const content = caption
+          ? `${imageMarker} ${caption}`
+          : imageMarker;
+
+        const isGroup =
+          ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'telegram',
+          isGroup,
+        );
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+
+        logger.info(
+          { chatJid, sender: senderName, size: buffer.length },
+          'Telegram photo stored with image data',
+        );
+      } catch (err) {
+        // Fallback to placeholder if download fails
+        logger.warn(
+          { chatJid, err },
+          'Failed to download Telegram photo, using placeholder',
+        );
+        storeNonText(ctx, '[Photo]');
+      }
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));

@@ -47,11 +47,67 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
+}
+
+const IMAGE_MARKER_RE = /\[nc:image:([^:]+):([A-Za-z0-9+/=\s]+)\]/g;
+
+/**
+ * Parse [nc:image:media_type:base64data] markers from text.
+ * Returns content blocks suitable for the Anthropic vision API.
+ */
+function parseImageMarkers(text: string): string | ContentBlock[] {
+  const markers: Array<{ start: number; end: number; media_type: string; data: string }> = [];
+
+  let match: RegExpExecArray | null;
+  while ((match = IMAGE_MARKER_RE.exec(text)) !== null) {
+    markers.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      media_type: match[1],
+      data: match[2].replace(/\s/g, ''),
+    });
+  }
+  IMAGE_MARKER_RE.lastIndex = 0;
+
+  if (markers.length === 0) return text;
+
+  const blocks: ContentBlock[] = [];
+
+  // Add image blocks first, then the remaining text
+  for (const marker of markers) {
+    blocks.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: marker.media_type,
+        data: marker.data,
+      },
+    });
+  }
+
+  // Build text content by removing image markers
+  let remaining = text;
+  for (let i = markers.length - 1; i >= 0; i--) {
+    remaining =
+      remaining.slice(0, markers[i].start) +
+      remaining.slice(markers[i].end);
+  }
+  remaining = remaining.trim();
+
+  if (remaining) {
+    blocks.push({ type: 'text', text: remaining });
+  }
+
+  return blocks;
 }
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
@@ -115,9 +171,10 @@ class MessageStream {
   private done = false;
 
   push(text: string): void {
+    const content = parseImageMarkers(text);
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: '',
     });
