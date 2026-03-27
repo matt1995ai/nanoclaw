@@ -6,10 +6,12 @@ import {
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  SCREENSHOT_SERVER_PORT,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { startScreenshotServer } from './screenshot-server.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -483,10 +485,25 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  // Start screenshot upload server (Chrome extension sends screenshots here)
+  // Uses the first registered main group's JID as the target chat
+  const mainGroup = Object.entries(registeredGroups).find(
+    ([, g]) => g.isMain,
+  );
+  let screenshotServer: import('http').Server | null = null;
+  if (mainGroup) {
+    screenshotServer = await startScreenshotServer(
+      SCREENSHOT_SERVER_PORT,
+      '127.0.0.1',
+      mainGroup[0],
+    );
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    screenshotServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
