@@ -398,16 +398,17 @@ export function createTask(
 function hydrateTask(row: Record<string, unknown>): ScheduledTask {
   return {
     ...(row as unknown as ScheduledTask),
-    mount_overrides: typeof row.mount_overrides === 'string'
-      ? JSON.parse(row.mount_overrides)
-      : null,
+    mount_overrides:
+      typeof row.mount_overrides === 'string'
+        ? JSON.parse(row.mount_overrides)
+        : null,
   };
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  const row = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
-    | Record<string, unknown>
-    | undefined;
+  const row = db
+    .prepare('SELECT * FROM scheduled_tasks WHERE id = ?')
+    .get(id) as Record<string, unknown> | undefined;
   return row ? hydrateTask(row) : undefined;
 }
 
@@ -432,7 +433,12 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status' | 'mount_overrides'
+      | 'prompt'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'next_run'
+      | 'status'
+      | 'mount_overrides'
     >
   >,
 ): void {
@@ -461,7 +467,9 @@ export function updateTask(
   }
   if (updates.mount_overrides !== undefined) {
     fields.push('mount_overrides = ?');
-    values.push(updates.mount_overrides ? JSON.stringify(updates.mount_overrides) : null);
+    values.push(
+      updates.mount_overrides ? JSON.stringify(updates.mount_overrides) : null,
+    );
   }
 
   if (fields.length === 0) return;

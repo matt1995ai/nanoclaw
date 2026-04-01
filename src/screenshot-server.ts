@@ -67,9 +67,7 @@ export function startScreenshotServer(
         // Strip data URL prefix if present (e.g., "data:image/png;base64,...")
         let base64 = data.image;
         let mediaType = 'image/png';
-        const dataUrlMatch = base64.match(
-          /^data:(image\/[a-z]+);base64,(.+)$/,
-        );
+        const dataUrlMatch = base64.match(/^data:(image\/[a-z]+);base64,(.+)$/);
         if (dataUrlMatch) {
           mediaType = dataUrlMatch[1];
           base64 = dataUrlMatch[2];

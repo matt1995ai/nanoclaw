@@ -260,13 +260,18 @@ export async function processTaskIpc(
         // Validate mount_overrides if provided
         let mountOverrides: MountOverride[] | null = null;
         if (Array.isArray(data.mount_overrides)) {
-          mountOverrides = (data.mount_overrides as Array<Record<string, unknown>>)
+          mountOverrides = (
+            data.mount_overrides as Array<Record<string, unknown>>
+          )
             .filter(
               (o) =>
                 typeof o.path === 'string' &&
                 (o.mode === 'ro' || o.mode === 'rw'),
             )
-            .map((o) => ({ path: o.path as string, mode: o.mode as 'ro' | 'rw' }));
+            .map((o) => ({
+              path: o.path as string,
+              mode: o.mode as 'ro' | 'rw',
+            }));
           if (mountOverrides.length === 0) mountOverrides = null;
         }
 
@@ -377,13 +382,18 @@ export async function processTaskIpc(
           updates.schedule_value = data.schedule_value;
         if (data.mount_overrides !== undefined) {
           if (Array.isArray(data.mount_overrides)) {
-            const validated = (data.mount_overrides as Array<Record<string, unknown>>)
+            const validated = (
+              data.mount_overrides as Array<Record<string, unknown>>
+            )
               .filter(
                 (o) =>
                   typeof o.path === 'string' &&
                   (o.mode === 'ro' || o.mode === 'rw'),
               )
-              .map((o) => ({ path: o.path as string, mode: o.mode as 'ro' | 'rw' }));
+              .map((o) => ({
+                path: o.path as string,
+                mode: o.mode as 'ro' | 'rw',
+              }));
             updates.mount_overrides = validated.length > 0 ? validated : null;
           } else {
             updates.mount_overrides = null; // Clear overrides

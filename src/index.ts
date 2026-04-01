@@ -487,9 +487,7 @@ async function main(): Promise<void> {
 
   // Start screenshot upload server (Chrome extension sends screenshots here)
   // Uses the first registered main group's JID as the target chat
-  const mainGroup = Object.entries(registeredGroups).find(
-    ([, g]) => g.isMain,
-  );
+  const mainGroup = Object.entries(registeredGroups).find(([, g]) => g.isMain);
   let screenshotServer: import('http').Server | null = null;
   if (mainGroup) {
     screenshotServer = await startScreenshotServer(

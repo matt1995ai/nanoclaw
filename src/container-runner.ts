@@ -261,7 +261,6 @@ function readSecrets(): Record<string, string> {
   ]);
 }
 
-
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
@@ -296,6 +295,15 @@ function buildContainerArgs(
     '-e',
     'GIT_SSH_COMMAND=ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes',
   );
+
+  // Pass optional service API keys to containers
+  const serviceKeys = readEnvFile([
+    'FIRECRAWL_API_KEY',
+    'INSTAGRAM_GRAPH_TOKEN',
+  ]);
+  for (const [key, value] of Object.entries(serviceKeys)) {
+    args.push('-e', `${key}=${value}`);
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

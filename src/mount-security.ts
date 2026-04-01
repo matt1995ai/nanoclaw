@@ -446,10 +446,7 @@ export function applyMountOverrides(
     } else if (override.mode === 'rw' && mount.readonly) {
       // Escalation: re-validate against allowlist to ensure it permits rw
       if (raw) {
-        const revalidation = validateMount(
-          { ...raw, readonly: false },
-          isMain,
-        );
+        const revalidation = validateMount({ ...raw, readonly: false }, isMain);
         if (revalidation.allowed && !revalidation.effectiveReadonly) {
           mount.readonly = false;
         } else {

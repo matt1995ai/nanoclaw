@@ -76,6 +76,9 @@ When the morning brief task runs, generate this:
 📈 Market Snapshot
 [S&P 500, major headlines from web search]
 
+📓 Sessions (vault-only)
+[Count session summaries NOT synced to dashboard (daily close-outs). Remind: "Check vault/sessions/ for daily close-outs — these don't sync to dashboard."]
+
 🎯 Suggested Focus
 [Based on GOALS.md + active tasks + current priorities]
 ```
@@ -204,12 +207,16 @@ Note: `/opus` and `/think` directives are now redundant — Opus 4.6 with 128k t
 |------|------|--------|
 | `/workspace/group/` | This group's folder (your CLAUDE.md lives here) | Read-write |
 | `/workspace/extra/vault/` | Sentinel vault (git repo) | Read-write |
-| `/workspace/extra/dev/` | All repos on Mini (infra, master-plan, projects) | Read-only |
+| `/workspace/extra/dev/master-plan/` | Business hub — STATUS.md, methodology, synced research | Read-write |
+| `/workspace/extra/dev/ai-dev-infrastructure/` | Build tooling — agents, skills, hooks, methodology | Read-write |
+| `/workspace/extra/dev/marketing/` | Marketing assets and campaigns | Read-write |
+| `/workspace/extra/dev/` | All other repos on Mini (product repos, projects) | Read-only |
 | `/workspace/ipc/` | IPC for sending messages + managing tasks | Read-write |
 
-To read a project file: `/workspace/extra/dev/master-plan/MASTER_PLAN.md`
-To read infrastructure: `/workspace/extra/dev/ai-dev-infrastructure/agents/`
 To write vault: `/workspace/extra/vault/tasks/inbox.md`
+To write master-plan: `/workspace/extra/dev/master-plan/STATUS.md`
+To write infrastructure: `/workspace/extra/dev/ai-dev-infrastructure/agents/`
+To write marketing: `/workspace/extra/dev/marketing/verseflow/`
 
 ## Architecture Context
 
@@ -250,6 +257,11 @@ You can dispatch subagents for parallel work. Use for:
 - Any task that benefits from parallel execution
 
 Agent Teams is enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`).
+
+### Subagent Access Constraints
+- **Research/consolidation subagents** get read-only access to source repos (`/workspace/extra/dev/`). They may only write to vault (`/workspace/extra/vault/`).
+- **Background overnight agents** (dream consolidation, research, audits) must never modify source repos, CLAUDE.md files, or infrastructure configs. Write only to vault research, sessions, or staging.
+- **Anti-lazy-delegation rule:** When dispatching subagents, specify EXACT data to read and EXACT output format expected. Do not say "review the findings" — cite the specific file paths and the specific deliverable.
 
 ### What to Use When
 
@@ -295,6 +307,24 @@ From the question, determine which project is involved:
 - Henryedu-related → also read `/workspace/extra/vault/council/personas/user-henryedu.md`
 - Ambiguous or cross-project → no project-specific persona (User seat speaks as most likely end user from context)
 
+**Step 2.5 — Load Project Research Context**
+
+Based on the project determined in Step 2, load additional research files to inject into seat prompts. This addresses context starvation — seats currently get ~5.4% of their context window. Loading project-specific research brings them into the 20-40% range with relevant, specific data.
+
+| Project | Files to Load |
+|---------|--------------|
+| VerseFlow | `/workspace/extra/vault/research-agents/religious-trends/learnings.md`, `/workspace/extra/vault/research-agents/consumer-spending/top-10-15pct-demographic-2026-03-25.md`, `/workspace/extra/vault/projects/verseflow-metrics.md`, latest file in `/workspace/extra/vault/research-agents/religious-trends/archive/` |
+| Henryedu | `/workspace/extra/vault/research-agents/education-trends/learnings.md`, `/workspace/extra/vault/projects/henryedu-build-decisions-2026-03-30.md`, `/workspace/extra/vault/projects/henryedu-skills-curriculum-mapping-2026-03-30.md` |
+| Hammer Golf | `/workspace/extra/vault/research-agents/consumer-spending/top-10-15pct-demographic-2026-03-25.md`, `/workspace/extra/vault/projects/hammer-golf-deep-dive-2026-03-26.md`, `/workspace/extra/vault/projects/hammer-golf-distribution-2026-03-27.md` |
+| NinetyFive Consulting | `/workspace/extra/vault/projects/ninetyfive-consulting-status-2026-03-27.md`, `/workspace/extra/vault/projects/ai-encyclopedia-brief-2026-03-27.md` |
+| Cross-project / General | `/workspace/extra/vault/GOALS.md`, latest 2 council sessions from `/workspace/extra/vault/council/sessions/` |
+
+**Loading rules:**
+- Read each file. If a file does not exist, skip it silently — do not error or halt.
+- For "latest file in archive/" or "latest 2 council sessions" — list the directory, sort by filename (date-prefixed), take the most recent.
+- Track the count of files successfully loaded and estimate total tokens (rough: 1 token ≈ 4 chars).
+- Log which files were loaded — this gets reported in the Telegram output (Step 5) and the session archive (Step 6).
+
 **Step 3 — Dispatch 6 Seats in Parallel**
 
 Use the Agent tool to dispatch 6 subagents simultaneously. Each subagent receives a single prompt containing:
@@ -302,6 +332,7 @@ Use the Agent tool to dispatch 6 subagents simultaneously. Each subagent receive
 - The decision profile contents
 - Project context contents (CONTEXT.md, GOALS.md, relevant STATUS)
 - For User seat: the project-specific persona file contents
+- Research context from Step 2.5 (all loaded research files)
 - The question
 
 **Prompt template for each subagent:**
@@ -321,6 +352,10 @@ You are the [Seat Name] on Matthew's Business Council.
 
 === USER PERSONA (User seat only) ===
 [Full contents of user-{project}.md — only included for User seat]
+
+=== RESEARCH CONTEXT (auto-loaded) ===
+[Contents of loaded research files from Step 2.5]
+[Note: {N} files loaded, ~{T} tokens of project-specific research]
 
 === QUESTION ===
 [The question Matthew asked]
@@ -396,6 +431,8 @@ Apply the decision profile's standing filters as a final check:
 
 ⚡ Dissent: [strongest surviving counter-argument — 1-2 sentences]
 
+📊 Context: {N} research files loaded (~{T} tokens)
+
 📄 Full: vault/council/sessions/[filename]
 ```
 
@@ -409,6 +446,8 @@ Write the complete session to `/workspace/extra/vault/council/sessions/YYYY-MM-D
 > Question: [full question text]
 > Project Context: [which project, if applicable]
 > User Persona Loaded: [which persona file, or "none"]
+> Research Context Loaded: [list of files loaded in Step 2.5, or "none"]
+> Research Tokens: ~{T} tokens across {N} files
 
 ## Seat Outputs
 
@@ -436,10 +475,20 @@ Write the complete session to `/workspace/extra/vault/council/sessions/YYYY-MM-D
 ## Dissent
 [strongest surviving counter-argument]
 
+## Session Quality
+- Seats with differentiated output: _/6
+- Skeptic/Competitive Gap pushed back: yes/no
+- Synthesis integrated vs. summarized: integrated/summarized
+- Unverified claims: _ (flagged: _ / unflagged: _)
+- Researcher pre-brief used: yes/no
+- Total runtime: ~_m
+
 ## Metadata
 - Models: Opus x6
 - Persona loaded: [filename or none]
 ```
+
+**Session Quality block is REQUIRED in every council session archive.** Fill in all fields after synthesis completes.
 
 After writing, git commit and push the vault:
 ```bash
@@ -461,299 +510,47 @@ Every 10 council sessions, write a meta-analysis to `vault/council/sessions/audi
 - Are the standing decision filters being applied, or glossed over?
 - Recommendation: adjust seat instructions based on findings
 
-## Marketing Council (`/marketing`)
-
-When Matthew sends a message starting with `/marketing`, execute the Marketing Council protocol.
-
-### Invocation
-
-`/marketing [product] | [audience] | [objective] | [timeframe]`
-
-Optionally append execution reality inline:
-`/marketing [product] | [audience] | [objective] | [timeframe] | Hours: [X] | Tools: [list] | Active: [list] | Blockers: [list] | Approval needed: [list]`
-
-Examples:
-- `/marketing VerseFlow | solo Christian women 25-45 | trial-to-paid conversion | 2 weeks | Hours: 8 | Tools: Buffer, Mailchimp | Active: none | Blockers: none | Approval needed before shipping: new email sequences`
-- `/marketing Henryedu | parents of 12-16yr-olds in private school | waitlist signups | 30 days`
-- `/marketing Hammer Golf | sports bettors 25-40 | app installs | 1 week | Hours: 12 | Tools: Buffer | Active: none | Blockers: App Store approval pending`
-
-### Input Gate (REQUIRED — Before Any Seats Run)
-
-Before dispatching seats, verify the invocation includes all four required fields:
-1. **Product** — which specific product
-2. **Audience** — who specifically (not "users")
-3. **Objective** — what measurable outcome
-4. **Timeframe** — by when
-
-If ANY of these four fields are missing or vague, **do not run seats.** Instead, ask Matthew to clarify. Example response:
-
-> "Missing from /marketing invocation:
-> - Audience: 'VerseFlow users' is too broad — who specifically? (e.g., 'solo Christian women 25-45')
-> - Timeframe: not specified — what's the decision window?
->
-> Resubmit as: `/marketing VerseFlow | [audience] | [objective] | [timeframe]`"
-
-If the execution reality block is not provided, ask for it before running seats:
-
-> "Need execution reality before running seats:
-> - Available hours this week: ?
-> - Active campaigns already running: ?
-> - Tools confirmed set up: ?
-> - Current blockers: ?
-> - What requires approval before shipping: ?"
-
-### Execution Flow
-
-**Step 1 — Read Context**
-
-Read these files before dispatching seats:
-- `/workspace/extra/vault/council/matthews-decision-profile.md` (always — this defines who you're advising)
-- `/workspace/extra/vault/CONTEXT.md` (always — project landscape)
-- `/workspace/extra/vault/GOALS.md` (always — current priorities and targets)
-- Relevant project STATUS.md if question is project-specific
-- Existing marketing strategy docs if available (e.g., marketing repo, research agents output)
-- Existing competitive intel from research agents (religious-trends, consumer-spending, reddit-pain-points) if relevant
-
-**Step 2 — Determine Project and Load Persona**
-
-From the question, determine which project is involved:
-- VerseFlow-related → also read `/workspace/extra/vault/council/personas/user-verseflow.md`
-- Henryedu-related → also read `/workspace/extra/vault/council/personas/user-henryedu.md`
-- Ambiguous or cross-project → no project-specific persona (Channel and Message seats speak to the most likely end user from context)
-
-The persona file is loaded for Channel and Message seats. Creator, Distributor, and Competitive Gap receive project context but not the persona file directly.
-
-**Step 3 — Dispatch 5 Seats in Parallel**
-
-Use the Agent tool to dispatch 5 subagents simultaneously. Each subagent receives a single prompt containing:
-- Its seat persona file contents (read from `/workspace/extra/dev/ai-dev-infrastructure/agents/council/council-{seat}.md`)
-- The decision profile contents
-- Project context contents (CONTEXT.md, GOALS.md, relevant STATUS)
-- For Channel and Message seats: the project-specific persona file contents
-- The question
-
-**Prompt template for each subagent:**
-```
-You are the [Seat Name] on Matthew's Marketing Council.
-
-=== SEAT INSTRUCTIONS ===
-[Full contents of council-{seat}.md]
-
-=== DECISION PROFILE ===
-[Full contents of matthews-decision-profile.md]
-
-=== PROJECT CONTEXT ===
-[Full contents of CONTEXT.md]
-[GOALS.md contents]
-[Additional project-specific context if applicable]
-
-=== USER PERSONA (Channel and Message seats only) ===
-[Full contents of user-{project}.md — only included for Channel and Message seats]
-
-=== EXECUTION REALITY ===
-- Available hours this week: [X]
-- Active campaigns already running: [list]
-- Tools confirmed set up: [list]
-- Current blockers: [list]
-- What requires approval before shipping: [list]
-
-=== QUESTION ===
-Product: [product]
-Audience: [audience]
-Objective: [objective]
-Timeframe: [timeframe]
-Full question: [The question Matthew asked]
-
-=== INSTRUCTIONS ===
-Respond with exactly 3 bullets following the output format in your seat instructions. Nothing else — no preamble, no sign-off.
-Do not assign actions to specific people. State the action and time cost only — the team decides who picks it up.
-```
-
-**Seats to dispatch:**
-
-| Seat | Persona File | Web Search |
-|------|-------------|------------|
-| Channel | `council-channel.md` + project persona | Yes — platform demographics, CAC benchmarks |
-| Message | `council-message.md` + project persona | Yes — competitor messaging audit |
-| Creator | `council-creator.md` | Optional — platform format specs |
-| Distributor | `council-distributor.md` | No |
-| Competitive Gap | `council-competitive-gap.md` | Yes — REQUIRED for competitor analysis |
-
-**Step 4 — CMO Synthesis**
-
-When all 5 seats return, synthesize as a **CMO** — you are the chief marketing officer integrating five specialist perspectives into a single actionable recommendation.
-
-The CMO synthesis is a **recommendation, not a list.** It must include:
-
-1. **Recommendation:** clear direction — one channel, one message, one format, one distribution plan
-2. **Rejected alternatives:** what was considered and why rejected
-3. **Unresolved disagreements:** where seats diverged — preserve the tension, don't collapse it
-4. **Critical assumptions:** what has to be true for this recommendation to hold
-5. **Kill signal:** what data in 2 weeks tells you this isn't working — specific metric + threshold
-6. **NOT doing:** explicit scope cut (what we're leaving out and why)
-
-The CMO does NOT accept "we need more data" as a conclusion. If data is missing, name what data, how to get it, and what to do in the meantime.
-
-Do not assign actions to specific people in the synthesis. State the action — the team decides who picks it up.
-
-Apply the decision profile's standing filters as a final check:
-1. Does this work at 2-person scale?
-2. Does it compound over time?
-3. What's the historical base rate?
-4. Does the actual human benefit?
-5. Is this on the critical path to $600K/year?
-
-**Step 5 — Format and Send Telegram Response**
-
-```
-📣 Marketing — [question, truncated to max 60 chars]
-
-📡 Channel:
-• [bullet 1]
-• [bullet 2]
-• [bullet 3]
-
-💬 Message:
-• [bullet 1]
-• [bullet 2]
-• [bullet 3]
-
-🎬 Creator:
-• [bullet 1]
-• [bullet 2]
-• [bullet 3]
-
-📤 Distributor:
-• [bullet 1]
-• [bullet 2]
-• [bullet 3]
-
-🔍 Competitive Gap:
-• [bullet 1]
-• [bullet 2]
-• [bullet 3]
-
-📋 CMO Recommendation:
-Recommendation: [clear direction — channel, message, format, distribution]
-Rejected alternatives: [what was considered + why rejected]
-Unresolved disagreements: [where seats diverged — preserve tension]
-Critical assumptions: [what must be true for this to hold]
-Kill signal: [what data in 2 weeks says this isn't working]
-NOT doing: [explicit scope cut]
-
-📄 Full: vault/council/sessions/[filename]
-```
-
-**Step 6 — Write Full Session to Vault**
-
-Write the complete session to `/workspace/extra/vault/council/sessions/YYYY-MM-DD-NNN-brief-description.md` with this format:
-
-```markdown
-# Marketing Council Session — [full question]
-> Date: YYYY-MM-DD HH:MM
-> Council Type: Marketing
-> Question: [full question text]
-> Project Context: [which project, if applicable]
-> User Persona Loaded: [which persona file, or "none — Channel/Message spoke as most likely user"]
-
-## Seat Outputs
-
-### 📡 Channel
-[full 3 bullets]
-
-### 💬 Message
-[full 3 bullets]
-
-### 🎬 Creator
-[full 3 bullets]
-
-### 📤 Distributor
-[full 3 bullets]
-
-### 🔍 Competitive Gap
-[full 3 bullets]
-
-## CMO Recommendation
-Recommendation: [clear direction — channel, message, format, distribution]
-Rejected alternatives: [what was considered + why rejected]
-Unresolved disagreements: [where seats diverged — preserve tension]
-Critical assumptions: [what must be true for this to hold]
-Kill signal: [what data in 2 weeks says this isn't working]
-NOT doing: [explicit scope cut]
-
-## Execution Reality (as provided)
-- Available hours: [X]
-- Active campaigns: [list]
-- Tools confirmed: [list]
-- Blockers: [list]
-- Approval needed: [list]
-
-## Metadata
-- Models: Opus x5
-- Persona loaded: [filename or none]
-```
-
-After writing, git commit and push the vault:
-```bash
-cd /workspace/extra/vault && git add -A && git commit -m "marketing council session: [slug]" && git push
-```
-
-### Error Handling
-
-- If a seat subagent fails or times out: include that seat's slot as "[Seat] — unavailable (timeout/error)" and proceed with remaining seats
-- If fewer than 3 seats return: warn Matthew that synthesis is degraded, proceed anyway
-- If web search fails for Channel/Message/Competitive Gap: they should note "web search unavailable — analysis based on existing knowledge only"
-
-### Health Audit
-
-Every 10 marketing council sessions, write a meta-analysis to `vault/council/sessions/audit-marketing-YYYY-MM-DD.md`:
-- Which seats consistently add unique value vs. overlap?
-- Are outputs getting formulaic? Check for seat drift.
-- Is the CMO synthesis actually recommending or just summarizing?
-- Are UNVERIFIED labels being applied consistently by Competitive Gap?
-- Recommendation: adjust seat instructions based on findings
-
 ## Research Pipeline (When Active)
 
-| Topic | Frequency | Vault Archive | Approved Destination |
-|-------|-----------|--------------|---------------------|
-| Current events / market news | Daily (morning brief) | Inline in brief | — |
-| LLM landscape | 3x/week (Mon/Wed/Fri) | vault/research-agents/llm-landscape/ | master-plan/research/ai-landscape/ |
-| Religious/Christianity trends | Sun/Wed | vault/research-agents/religious-trends/ | marketing/research/religious-trends/ |
-| Education trends | Tue/Sat | vault/research-agents/education-trends/ | Henryedu/research/education-trends/ |
-| Consumer spending | 1-2x/month | vault/research-agents/consumer-spending/ | marketing/research/consumer-spending/ |
-| Reddit/pain points | 1-2x/month | vault/research-agents/reddit-pain-points/ | marketing/research/reddit-pain-points/ |
-| Recession-proof trends | 1-2x/month | vault/research-agents/recession-proof/ | master-plan/research/recession-proof/ |
-| Macro signals (financial) | Weeknights 11pm | vault/finance/signals/ | Morning brief only |
+| Topic | Frequency | Vault Archive (Authoritative) |
+|-------|-----------|-------------------------------|
+| Current events / market news | Daily (morning brief) | Inline in brief |
+| LLM landscape | 3x/week (Mon/Wed/Fri) | vault/research-agents/llm-landscape/ |
+| Religious/Christianity trends | Sun/Wed | vault/research-agents/religious-trends/ |
+| Education trends | Tue/Sat | vault/research-agents/education-trends/ |
+| Consumer spending | 1-2x/month | vault/research-agents/consumer-spending/ |
+| Reddit/pain points | 1-2x/month | vault/research-agents/reddit-pain-points/ |
+| Recession-proof trends | 1-2x/month | vault/research-agents/recession-proof/ |
+| Macro signals (financial) | Weeknights 11pm | vault/finance/signals/ |
 
 Each research output uses the template at `vault/_templates/research-output.md`.
 
-## Research Routing (Approved Content)
+## Research Routing
 
-When Matthew approves a staging item or research synthesis in the morning brief:
+**Vault is the single source of truth for all research.** Sentinel writes research ONLY to vault/research-agents/. No direct writes to master-plan/research/ or other repos.
 
-1. **Move the file** from `vault/staging/` (or vault archive) to the approved destination repo listed above
-2. **Update INDEX.md** in the destination folder with the new entry
-3. **Git commit + push** to the destination repo
-4. **Clear from staging** if it was in vault/staging/
+**Sync to master-plan (business hub):** A sync script copies the business subset from vault to master-plan on the 1995ai org GitHub. This makes research visible to Jeff via the dashboard and git. The sync runs after every vault push.
 
-### Destination Repo Structure
+**What gets synced to master-plan:**
+| Vault Source | master-plan Destination |
+|-------------|------------------------|
+| vault/research-agents/ | master-plan/research/ |
+| vault/projects/ | master-plan/projects/ |
+| vault/council/sessions/ | master-plan/council/ |
+| vault/tasks/ | master-plan/tasks/ |
+| Generated from GOALS.md | master-plan/goals/BUSINESS_GOALS.md |
+| Generated from WEEKLY.md | master-plan/goals/BUSINESS_WEEKLY.md |
 
-| Repo | Research Folder | Contents |
-|------|----------------|----------|
-| `master-plan` | `research/ai-landscape/` | LLM capabilities, Claude features, agentic tooling |
-| `master-plan` | `research/competitive-intel/` | Competitor moves across all projects |
-| `master-plan` | `research/recession-proof/` | Macro/economic trends |
-| `marketing` | `research/religious-trends/` | Faith/church tech trends |
-| `marketing` | `research/consumer-spending/` | Spending behavior trends |
-| `marketing` | `research/reddit-pain-points/` | User pain points from social listening |
-| `marketing` | `verseflow/church-outreach/` | VerseFlow campaign artifacts (target list, email sequence, tracking) |
-| `marketing` | `verseflow/content/` | VerseFlow content assets (video evals, social copy, scripts) |
-| `Henryedu` | `research/education-trends/` | Education market, AI tutoring, homeschool |
+**What does NOT sync (Matthew/Sentinel only):**
+sessions/, dailies/, staging/, historian/, cowork/, finance/, TODAY.md, GOALS.md, WEEKLY.md
+
+**Marketing repo** still receives campaign content directly (not via sync):
+| `marketing` | `verseflow/church-outreach/` | VerseFlow campaign artifacts |
+| `marketing` | `verseflow/content/` | VerseFlow content assets |
 
 ### For AI Instances Discovering Research
 
-Read `INDEX.md` in the destination folder before running new web searches. Files there are verified and Matthew-approved. If the date is >60 days old, flag for refresh.
+Read vault/research-agents/ as the authoritative source. master-plan/research/ is a read-only sync target — never write there directly. If a research file date is >60 days old, flag for refresh.
 
 ## Research Action Triggers
 

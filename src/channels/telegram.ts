@@ -194,24 +194,26 @@ export class TelegramChannel implements Channel {
         // Download the image from Telegram's file API
         const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
         const response = await fetch(url);
-        if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+        if (!response.ok)
+          throw new Error(`Download failed: ${response.status}`);
         const buffer = Buffer.from(await response.arrayBuffer());
         const base64 = buffer.toString('base64');
 
         // Detect media type from file extension (Telegram converts photos to JPEG)
         const ext = file.file_path.split('.').pop()?.toLowerCase();
         const mediaType =
-          ext === 'png' ? 'image/png' :
-          ext === 'gif' ? 'image/gif' :
-          ext === 'webp' ? 'image/webp' :
-          'image/jpeg';
+          ext === 'png'
+            ? 'image/png'
+            : ext === 'gif'
+              ? 'image/gif'
+              : ext === 'webp'
+                ? 'image/webp'
+                : 'image/jpeg';
 
         // Embed image as a parseable marker in message content
         // The agent-runner will extract these and build vision content blocks
         const imageMarker = `[nc:image:${mediaType}:${base64}]`;
-        const content = caption
-          ? `${imageMarker} ${caption}`
-          : imageMarker;
+        const content = caption ? `${imageMarker} ${caption}` : imageMarker;
 
         const isGroup =
           ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';

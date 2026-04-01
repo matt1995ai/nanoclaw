@@ -166,9 +166,7 @@ describe('applyMountOverrides', () => {
     // (nonMainReadOnly forces ro for non-main groups)
     mockReadFileSync.mockReturnValue(
       JSON.stringify({
-        allowedRoots: [
-          { path: '/home/user', allowReadWrite: true },
-        ],
+        allowedRoots: [{ path: '/home/user', allowReadWrite: true }],
         blockedPatterns: [],
         nonMainReadOnly: true,
       }),
