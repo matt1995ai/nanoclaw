@@ -585,6 +585,13 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        firecrawl: {
+          command: 'npx',
+          args: ['-y', 'firecrawl-mcp'],
+          env: {
+            FIRECRAWL_API_KEY: process.env.FIRECRAWL_API_KEY || '',
+          },
+        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
